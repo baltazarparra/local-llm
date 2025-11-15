@@ -3,7 +3,9 @@ Run powerful AI language models on your computer completely offline. No cloud de
 
 ## What You Can Do
 
-Chat interactively with AI using a beautiful, feature-rich terminal interface. Ego Proxy provides a modern chat experience with markdown rendering, syntax highlighting, streaming responses, and conversation history.
+**Standard Chat:** Chat interactively with AI using a beautiful, feature-rich terminal interface. Ego Proxy provides a modern chat experience with markdown rendering, syntax highlighting, streaming responses, and conversation history.
+
+**Personal Assistant (NEW!):** Transform your chat into an intelligent personal work assistant that remembers everything you tell it. Automatically tracks people, topics, dates, and provides context-aware advice based on your conversation history. Perfect for logging daily work activities and getting intelligent reminders.
 
 ## What You Need
 
@@ -51,10 +53,17 @@ pip install -r requirements.txt -r requirements-dev.txt
 
 ## Using It
 
-**Interactive Chat:**
+**Standard Interactive Chat:**
 ```bash
 ./chat-rich.sh
 ```
+
+**Personal Assistant with Memory:**
+```bash
+./assistant.sh
+```
+
+The assistant automatically saves all conversations, extracts metadata (people, topics, sentiment), and retrieves relevant context when you ask questions. See `ASSISTANT.md` for detailed documentation.
 
 ## Configuration
 
@@ -98,8 +107,12 @@ TEMPERATURE=0.7
 
 **Script won't run?** Make it executable: `chmod +x chat-rich.sh`
 
+## Documentation
+
+- **PLAN.md** - Development roadmap and architecture
+- **ASSISTANT.md** - Personal Assistant feature documentation
+- **CONTRIBUTING.md** - Contribution guidelines
+
 ## That's It
 
 Your data stays local. No tracking. No cloud calls. Just you and your AI model running on your machine.
-
-Want more details? Check out `PLAN.md` for the development roadmap.

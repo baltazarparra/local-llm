@@ -31,6 +31,10 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 prompt-toolkit>=3.0.0
 
+# Personal Assistant - Semantic Search & Memory
+sentence-transformers>=2.2.0  # Semantic embeddings (small, efficient)
+numpy>=1.24.0                 # Vector operations
+
 # Optional: Quantization and optimization
 # bitsandbytes>=0.41.0  # Uncomment for 4-bit/8-bit quantization
 # safetensors>=0.4.0    # Uncomment for safer model serialization

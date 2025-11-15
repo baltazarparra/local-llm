@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned
 - Comprehensive test suite (pytest)
-- API streaming endpoints (Server-Sent Events)
 - Docker containerization
 - CI/CD pipeline (GitHub Actions)
 - Model quantization support (4-bit/8-bit)
+
+### Removed in This Version
+- One-off text generation script (`scripts/run_once.py`)
+- Classic CLI interface (`src/chat_cli.py`)
+- REST API server (`src/api_server.py`)
+- Focus is now exclusively on the Rich UI interactive chat interface
 
 ## [0.1.0] - 2025-11-15
 
@@ -25,13 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GPU/CPU auto-detection and device mapping
   - Configuration management via environment variables
 
-- **Classic CLI Interface**
-  - Interactive REPL-based chat
-  - Conversation history (up to 50 messages)
-  - Commands: `/help`, `/exit`, `/reset`, `/history`
-  - System prompt support
-  - Stateless mode option
-
 - **Enhanced Rich UI Interface** 
   - Markdown rendering with syntax highlighting (200+ languages)
   - Live streaming responses with visual feedback
@@ -41,22 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Export conversations to markdown (`/export`)
   - Beautiful panels and formatting with emoji indicators
 
-- **REST API Server**
-  - FastAPI-based HTTP server
-  - 5 endpoints: `/`, `/health`, `/info`, `/generate`, `/chat`
-  - Pydantic request/response validation
-  - Actual token counting (not approximations)
-  - Error handling with proper HTTP status codes
-  - Performance timing in responses
-
-- **One-off Generation Script**
-  - Command-line text generation
-  - Stdin/stdout pipe support
-  - Verbose mode and prompt display options
-  - All generation parameters configurable
-
 - **Convenience Features**
-  - Shell launchers (`chat.sh`, `chat-rich.sh`, `api.sh`, `run.sh`)
+  - Shell launcher (`chat-rich.sh`)
   - Virtual environment auto-activation support
   - direnv configuration (`.envrc`)
   - Comprehensive `.gitignore`
@@ -74,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimized dependencies (removed unused `torchvision`, `torchaudio`)
 
 ### Removed
-- Unused `JSONResponse` import from `api_server.py`
+- One-off generation script and related files
+- Classic CLI interface
+- REST API server
+- FastAPI and uvicorn dependencies
 - Unused dependencies: `torchvision`, `torchaudio`
 - All deprecation warnings
 
@@ -84,17 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Import optimization (removed unused imports)
 
 ### Technical Details
-- **Lines of Code**: ~1,600
-- **Python Files**: 8
-- **Classes**: 9 (100% documented)
-- **Functions**: 30+ (100% documented)
+- **Lines of Code**: ~800
+- **Python Files**: 5
+- **Classes**: 6 (100% documented)
+- **Functions**: 20+ (100% documented)
 - **Supported Models**: Qwen, Llama, Phi-3, and any HuggingFace chat model
 - **Default Model**: Qwen/Qwen2.5-1.5B-Instruct (1543.71M parameters)
 
 ### Performance
 - Model loading: ~2-3 seconds (CPU), ~5 seconds (GPU first time)
 - Text generation: ~3 seconds for ~10 tokens (CPU, bfloat16)
-- API response time: ~2.9 seconds (CPU)
 - Streaming: Real-time token display with 10 FPS refresh
 
 ---

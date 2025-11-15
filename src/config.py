@@ -5,7 +5,6 @@ This module manages all configuration settings including:
 - Model selection and parameters
 - Device and dtype settings
 - Generation parameters
-- API server settings
 """
 
 import os
@@ -33,10 +32,6 @@ class Config:
     TOP_P: float = float(os.getenv("TOP_P", "0.9"))
     TOP_K: int = int(os.getenv("TOP_K", "50"))
     DO_SAMPLE: bool = os.getenv("DO_SAMPLE", "true").lower() == "true"
-
-    # API server settings
-    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
-    API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

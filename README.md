@@ -4,7 +4,7 @@ Run powerful AI language models on your computer completely offline. No cloud de
 
 ## What You Can Do
 
-This project gives you four ways to work with AI models. Chat interactively with a beautiful terminal interface, run quick text generation without opening a chat session, use a simple command-line interface, or start an HTTP server so other programs can access the model.
+Chat interactively with AI using a beautiful, feature-rich terminal interface. Ego Proxy provides a modern chat experience with markdown rendering, syntax highlighting, streaming responses, and conversation history.
 
 ## What You Need
 
@@ -25,17 +25,6 @@ pip install -r requirements.txt
 ./chat-rich.sh
 ```
 
-**Quick Text Generation:**
-```bash
-./run.sh scripts/run_once.py --prompt "What is machine learning?"
-```
-
-**API Server:**
-```bash
-./api.sh
-```
-Then access it at `http://localhost:8000/docs`
-
 ## Configuration
 
 Create a `.env` file to customize settings:
@@ -52,7 +41,7 @@ TEMPERATURE=0.7
 
 **Very slow?** You're probably on CPU. GPU is much faster.
 
-**Scripts won't run?** Make them executable: `chmod +x chat.sh run.sh api.sh`
+**Script won't run?** Make it executable: `chmod +x chat-rich.sh`
 
 ## That's It
 

@@ -1,5 +1,20 @@
-# Core dependencies for ego_proxy
+# Core runtime dependencies for ego_proxy
 # Python 3.10+ required
+#
+# Installation Tips for Faster Setup:
+# - Use pip with --prefer-binary flag: pip install --prefer-binary -r requirements.txt
+# - For even faster installs, use uv: uv pip install -r requirements.txt
+# - PyTorch wheels are large (~500MB-2GB). Use pip cache to speed up reinstalls:
+#   pip install --cache-dir ~/.cache/pip -r requirements.txt
+#
+# PyTorch Installation Options:
+# - CPU only (faster download, ~200MB): pip install torch --index-url https://download.pytorch.org/whl/cpu
+# - CUDA 11.8: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# - CUDA 12.1: pip install torch --index-url https://download.pytorch.org/whl/cu121
+# - Default (auto-detects): pip install torch (uses PyPI, may be slower)
+#
+# Note: If you have CUDA installed, PyTorch will automatically use GPU support.
+# For CPU-only systems, the default torch package works fine but is larger.
 
 # PyTorch (GPU support)
 torch>=2.0.0
@@ -12,14 +27,9 @@ tokenizers>=0.15.0
 # Configuration
 python-dotenv>=1.0.0
 
-# Terminal UI (Phase 4 - Enhanced CLI)
+# Terminal UI (Enhanced CLI)
 rich>=13.0.0
 prompt-toolkit>=3.0.0
-
-# Testing (for Phase 6)
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-httpx>=0.25.0
 
 # Optional: Quantization and optimization
 # bitsandbytes>=0.41.0  # Uncomment for 4-bit/8-bit quantization

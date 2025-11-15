@@ -1,5 +1,4 @@
-# Ego Proxy
-
+# ego_proxy
 Run powerful AI language models on your computer completely offline. No cloud dependencies, no data shared externally. Perfect for chatting with AI while keeping everything private.
 
 ## What You Can Do
@@ -12,10 +11,42 @@ Python 3.10 or newer. A GPU helps but isn't required. Models download automatica
 
 ## Getting Started
 
+### Quick Start (Recommended)
+
 ```bash
+# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+
+# Install dependencies (optimized for speed)
+pip install --prefer-binary --upgrade-strategy only-if-needed -r requirements.txt
+```
+
+### Faster Installation Options
+
+**Option 1: Using uv (Fastest - Recommended)**
+```bash
+# Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh
+# Then install dependencies:
+uv pip install -r requirements.txt
+```
+
+**Option 2: Using pip with optimizations**
+```bash
+pip install --prefer-binary --upgrade-strategy only-if-needed --cache-dir ~/.cache/pip -r requirements.txt
+```
+
+**Option 3: Using installation script**
+```bash
+# Run the optimized installation script
+./scripts/install.sh
+```
+
+### Development Setup
+
+For contributors who want to run tests:
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 ## Using It
@@ -36,6 +67,30 @@ TEMPERATURE=0.7
 ```
 
 ## Troubleshooting
+
+### Installation Issues
+
+**pip install is very slow?**
+- Use `uv` instead: `uv pip install -r requirements.txt` (often 10-100x faster)
+- Use pip cache: `pip install --cache-dir ~/.cache/pip -r requirements.txt`
+- Use `--prefer-binary` flag to avoid building from source
+- PyTorch is large (~500MB-2GB). First install takes time, subsequent installs use cache
+- For CPU-only systems, use PyTorch CPU build: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+
+**Network timeouts or slow downloads?**
+- Use a pip mirror: `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt` (China)
+- Increase pip timeout: `pip install --default-timeout=1000 -r requirements.txt`
+- Check your internet connection and firewall settings
+
+**Out of disk space?**
+- PyTorch and dependencies need ~3-5GB free space
+- Use pip cache cleanup: `pip cache purge` (then reinstall with cache)
+
+**Permission errors?**
+- Make sure virtual environment is activated: `source .venv/bin/activate`
+- Don't use `sudo` with pip in virtual environments
+
+### Runtime Issues
 
 **Out of memory?** Lower `MAX_NEW_TOKENS` or try `USE_GPU=false`
 

@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 **Interactive Chat:**
 ```bash
-./chat.sh
+./chat-rich.sh
 ```
 
 **Quick Text Generation:**

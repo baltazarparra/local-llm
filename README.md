@@ -1,7 +1,9 @@
-![Hero Image](hero.jpeg)
-
 # ✳️ ego_proxy
 Run powerful AI language models FREE completely offline. No "Big Brother" with your data, stay 100% local.
+
+
+![Hero Image](hero.jpeg)
+
 
 ## Personal Assistant with Memory
 

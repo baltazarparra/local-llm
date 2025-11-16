@@ -8,6 +8,8 @@ for intelligent retrieval and context-aware responses.
 import json
 import logging
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -27,14 +29,36 @@ class AssistantDatabase:
         """
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        self._local = threading.local()  # Thread-local storage for connections
+        self._write_lock = threading.Lock()  # Lock for write operations
+        self._pending_commits = []  # Buffer for batch commits
+        self._commit_threshold = 10  # Commit after N operations
         self._initialize_database()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a thread-local database connection."""
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            self._local.conn = sqlite3.connect(
+                self.db_path,
+                timeout=30.0,
+                isolation_level="DEFERRED",  # Allow concurrent reads during writes
+            )
+            self._local.conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn.execute(
+                "PRAGMA busy_timeout=60000"
+            )  # 60 second busy timeout
+            logger.debug(
+                f"Created new connection for thread {threading.current_thread().name}"
+            )
+        return self._local.conn
 
     def _initialize_database(self):
         """Create database schema if it doesn't exist."""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row  # Return rows as dictionaries
-
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         # Create conversations table
         cursor.execute("""
@@ -91,8 +115,26 @@ class AssistantDatabase:
             )
         """)
 
-        self.conn.commit()
+        conn.commit()
         logger.debug(f"Database initialized: {self.db_path}")
+
+    @contextmanager
+    def _batch_commit(self):
+        """Context manager for batch commits."""
+        yield
+        # Only lock during the commit check/flush
+        with self._write_lock:
+            self._pending_commits.append(1)
+            if len(self._pending_commits) >= self._commit_threshold:
+                self._flush_commits()
+
+    def _flush_commits(self):
+        """Flush pending commits to database."""
+        if self._pending_commits:
+            conn = self._get_connection()
+            conn.commit()
+            self._pending_commits.clear()
+            logger.debug("Flushed batch commits")
 
     def add_conversation(
         self,
@@ -113,29 +155,30 @@ class AssistantDatabase:
         Returns:
             The ID of the inserted conversation
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
-        if timestamp:
-            cursor.execute(
-                """
-                INSERT INTO conversations (timestamp, role, content, session_id)
-                VALUES (?, ?, ?, ?)
-            """,
-                (timestamp, role, content, session_id),
-            )
-        else:
-            cursor.execute(
-                """
-                INSERT INTO conversations (role, content, session_id)
-                VALUES (?, ?, ?)
-            """,
-                (role, content, session_id),
-            )
+        with self._batch_commit():
+            if timestamp:
+                cursor.execute(
+                    """
+                    INSERT INTO conversations (timestamp, role, content, session_id)
+                    VALUES (?, ?, ?, ?)
+                """,
+                    (timestamp, role, content, session_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO conversations (role, content, session_id)
+                    VALUES (?, ?, ?)
+                """,
+                    (role, content, session_id),
+                )
 
-        self.conn.commit()
-        conversation_id = cursor.lastrowid
-        logger.debug(f"Added conversation {conversation_id}: {role}")
-        return conversation_id
+            conversation_id = cursor.lastrowid
+            logger.debug(f"Added conversation {conversation_id}: {role}")
+            return conversation_id
 
     def add_metadata(
         self,
@@ -162,33 +205,36 @@ class AssistantDatabase:
         Returns:
             The ID of the inserted metadata
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         # Convert lists to JSON strings
         people_json = json.dumps(people) if people else None
         topics_json = json.dumps(topics) if topics else None
 
-        cursor.execute(
-            """
-            INSERT INTO metadata
-            (conversation_id, people, topics, dates_mentioned, sentiment, category, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                conversation_id,
-                people_json,
-                topics_json,
-                dates_mentioned,
-                sentiment,
-                category,
-                embedding,
-            ),
-        )
+        with self._batch_commit():
+            cursor.execute(
+                """
+                INSERT INTO metadata
+                (conversation_id, people, topics, dates_mentioned, sentiment, category, embedding)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    conversation_id,
+                    people_json,
+                    topics_json,
+                    dates_mentioned,
+                    sentiment,
+                    category,
+                    embedding,
+                ),
+            )
 
-        self.conn.commit()
-        metadata_id = cursor.lastrowid
-        logger.debug(f"Added metadata {metadata_id} for conversation {conversation_id}")
-        return metadata_id
+            metadata_id = cursor.lastrowid
+            logger.debug(
+                f"Added metadata {metadata_id} for conversation {conversation_id}"
+            )
+            return metadata_id
 
     def get_conversations(
         self,
@@ -211,7 +257,8 @@ class AssistantDatabase:
         Returns:
             List of conversation dictionaries
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         query = "SELECT * FROM conversations WHERE 1=1"
         params = []
@@ -253,7 +300,8 @@ class AssistantDatabase:
         Returns:
             Dictionary with conversation and metadata, or None if not found
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -290,7 +338,8 @@ class AssistantDatabase:
         Returns:
             List of conversations with metadata
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -330,7 +379,8 @@ class AssistantDatabase:
         Returns:
             List of conversations with metadata
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -366,7 +416,8 @@ class AssistantDatabase:
         Returns:
             List of unique person names
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("""
             SELECT DISTINCT people FROM metadata WHERE people IS NOT NULL
@@ -389,7 +440,8 @@ class AssistantDatabase:
         Returns:
             List of unique topics
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("""
             SELECT DISTINCT topics FROM metadata WHERE topics IS NOT NULL
@@ -417,7 +469,8 @@ class AssistantDatabase:
         Returns:
             List of (conversation_id, embedding) tuples
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         query = """
             SELECT conversation_id, embedding
@@ -439,7 +492,8 @@ class AssistantDatabase:
         Returns:
             Dictionary with statistics
         """
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("SELECT COUNT(*) as count FROM conversations")
         total_conversations = cursor.fetchone()["count"]
@@ -476,10 +530,22 @@ class AssistantDatabase:
         }
 
     def close(self):
-        """Close the database connection."""
+        """Close the database connection and flush pending commits."""
+        # Flush any pending commits
+        with self._write_lock:
+            if self._pending_commits:
+                self._flush_commits()
+
+        # Close thread-local connection if it exists
+        if hasattr(self._local, "conn") and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None
+            logger.info("Database connection closed")
+
+        # Close main connection if it exists (legacy)
         if self.conn:
             self.conn.close()
-            logger.info("Database connection closed")
+            self.conn = None
 
     def __enter__(self):
         """Context manager entry."""

@@ -8,6 +8,8 @@ This module provides a clean interface for text generation with:
 """
 
 import logging
+import signal
+from contextlib import contextmanager
 from threading import Thread
 from typing import Iterator, List, Optional, Tuple
 
@@ -19,20 +21,58 @@ from .config import config
 logger = logging.getLogger(__name__)
 
 
+class TimeoutException(Exception):
+    """Exception raised when generation times out."""
+
+    pass
+
+
 class TextGenerator:
     """Wrapper around model.generate() with sane defaults."""
 
-    def __init__(self, model, tokenizer):
+    def __init__(self, model, tokenizer, generation_timeout: int = 300):
         """
         Initialize the text generator.
 
         Args:
             model: The loaded language model
             tokenizer: The loaded tokenizer
+            generation_timeout: Maximum time in seconds for generation (default: 300s/5min)
         """
         self.model = model
         self.tokenizer = tokenizer
         self.device = model.device
+        self.generation_timeout = generation_timeout
+
+    @contextmanager
+    def _generation_timeout(self, timeout: Optional[int] = None):
+        """Context manager for generation timeout."""
+        timeout = timeout or self.generation_timeout
+
+        def timeout_handler(signum, frame):
+            raise TimeoutException(f"Generation timed out after {timeout} seconds")
+
+        # Set alarm (only works on Unix-like systems AND main thread)
+        try:
+            import threading
+
+            if threading.current_thread() is not threading.main_thread():
+                # Can't use signals in background threads, just proceed without timeout
+                logger.debug("Skipping timeout (not in main thread)")
+                yield
+                return
+
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout)
+            try:
+                yield
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+        except (AttributeError, ValueError) as e:
+            # Windows doesn't have SIGALRM or signal error, just proceed without timeout
+            logger.debug(f"Timeout not available: {e}")
+            yield
 
     def generate_text(
         self,
@@ -90,17 +130,22 @@ class TextGenerator:
         logger.debug(f"Input length: {input_length} tokens")
         logger.debug(f"Generating up to {max_new_tokens} new tokens")
 
-        # Generate
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=do_sample,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
+        # Generate with timeout protection
+        try:
+            with self._generation_timeout():
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                        do_sample=do_sample,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+        except TimeoutException as e:
+            logger.error(f"Generation timed out: {e}")
+            return "[Generation timed out - please try a shorter prompt or reduce max_tokens]"
 
         # Decode
         full_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -163,17 +208,22 @@ class TextGenerator:
         inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
         input_length = inputs.input_ids.shape[1]
 
-        # Generate
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                do_sample=do_sample,
-                pad_token_id=self.tokenizer.eos_token_id,
-                **kwargs,
-            )
+        # Generate with timeout protection
+        try:
+            with self._generation_timeout():
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        do_sample=do_sample,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        **kwargs,
+                    )
+        except TimeoutException as e:
+            logger.error(f"Generation timed out: {e}")
+            return "[Generation timed out - please try a shorter prompt or reduce max_tokens]"
 
         # Decode only the new tokens
         new_tokens = outputs[0][input_length:]

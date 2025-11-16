@@ -6,10 +6,13 @@ extracts metadata, and retrieves relevant context for intelligent responses.
 """
 
 import argparse
+import atexit
 import logging
+import signal
 import sys
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -29,6 +32,7 @@ from .database import AssistantDatabase
 from .enrichment import MetadataExtractor
 from .generator import TextGenerator
 from .google_calendar import GoogleCalendarIntegration
+from .health_monitor import HealthMonitor
 from .model_loader import get_model_info, load_tokenizer_and_model
 from .prompts import (
     ASSISTANT_SYSTEM_PROMPT,
@@ -82,10 +86,22 @@ class AssistantChatCLI:
         # Context retriever
         self.retriever = ContextRetriever(self.db)
 
+        # Thread pool for background enrichment tasks (bounded to prevent resource exhaustion)
+        self.enrichment_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="enrichment"
+        )
+
+        # Health monitoring for long-running operations
+        self.health_monitor = HealthMonitor(db_path=db_path, check_interval=300)
+        self.health_monitor.start_monitoring()
+
+        # Register cleanup on exit
+        atexit.register(self._cleanup)
+
         # Google Calendar integration
         self.calendar = None
         try:
-            self.calendar = GoogleCalendarIntegration(self.db.conn)
+            self.calendar = GoogleCalendarIntegration(self.db)
             # Try to authenticate (will use cached tokens if available)
             if self.calendar.authenticate():
                 self.console.print("[green]📅 Google Calendar connected[/green]")
@@ -122,8 +138,31 @@ class AssistantChatCLI:
             """Submit on Meta+Enter (ESC+Enter)"""
             event.current_buffer.validate_and_handle()
 
+        # Limit file history size to prevent unbounded growth
+        from prompt_toolkit.history import FileHistory as BaseFileHistory
+
+        class LimitedFileHistory(BaseFileHistory):
+            """File history with size limit."""
+
+            def __init__(self, filename, max_entries=1000):
+                super().__init__(filename)
+                self.max_entries = max_entries
+                self._trim_history()
+
+            def _trim_history(self):
+                """Trim history file if it exceeds max entries."""
+                try:
+                    with open(self.filename, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+
+                    if len(lines) > self.max_entries:
+                        with open(self.filename, "w", encoding="utf-8") as f:
+                            f.writelines(lines[-self.max_entries :])
+                except FileNotFoundError:
+                    pass
+
         self.session = PromptSession(
-            history=FileHistory(history_file),
+            history=LimitedFileHistory(history_file, max_entries=1000),
             auto_suggest=AutoSuggestFromHistory(),
             multiline=True,
             enable_history_search=True,
@@ -140,6 +179,11 @@ class AssistantChatCLI:
         # Trim history if too long (keep system prompt)
         if len(self.history) > self.max_history:
             self.history = [self.history[0]] + self.history[-(self.max_history - 1) :]
+
+            # Trigger garbage collection after trimming
+            import gc
+
+            gc.collect()
 
     def save_conversation(self, role: str, content: str) -> int:
         """
@@ -209,11 +253,29 @@ class AssistantChatCLI:
             assistant_conv_id: Assistant conversation ID
             assistant_message: Assistant message content
         """
-        try:
-            self.enrich_conversation(user_conv_id, user_message, "user")
-            self.enrich_conversation(assistant_conv_id, assistant_message, "assistant")
-        except Exception as e:
-            logger.warning(f"Background enrichment failed: {e}")
+        import time
+
+        # Retry with exponential backoff for database lock contention
+        max_retries = 3
+        base_delay = 0.5  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                self.enrich_conversation(user_conv_id, user_message, "user")
+                self.enrich_conversation(
+                    assistant_conv_id, assistant_message, "assistant"
+                )
+                return  # Success, exit
+            except Exception as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    delay = base_delay * (2**attempt)  # Exponential backoff
+                    logger.debug(
+                        f"Database locked, retrying in {delay}s (attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.warning(f"Background enrichment failed: {e}")
+                    return
 
     def retrieve_context(self, query: str, top_k: int = 5) -> List[Dict]:
         """
@@ -570,6 +632,20 @@ I automatically save everything and retrieve relevant context for you.
 
             # Add newline after Live() context for clean console state
             self.console.print()
+
+            # Clear torch cache to prevent memory buildup
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                # Also trigger garbage collection
+                import gc
+
+                gc.collect()
+            except Exception:
+                pass
+
             return accumulated
 
         except Exception as e:
@@ -590,6 +666,29 @@ I automatically save everything and retrieve relevant context for you.
             "[dim]Type your message and press Meta+Enter (ESC+Enter) or Alt+Enter to send[/dim]"
         )
         self.console.print()
+
+    def _cleanup(self):
+        """Cleanup resources on exit."""
+        logger.info("Cleaning up resources...")
+
+        # Stop health monitoring
+        if hasattr(self, "health_monitor"):
+            self.health_monitor.stop_monitoring()
+            # Log final health summary
+            summary = self.health_monitor.get_metrics_summary()
+            if summary:
+                logger.info(f"Session health summary: {summary}")
+
+        # Shutdown thread pool and wait for pending tasks
+        if hasattr(self, "enrichment_executor"):
+            logger.info("Waiting for enrichment tasks to complete...")
+            self.enrichment_executor.shutdown(wait=True)
+            logger.info("Enrichment tasks completed")
+
+        # Close database connection
+        if hasattr(self, "db"):
+            self.db.close()
+            logger.info("Database closed")
 
     def run(self):
         """Start the interactive assistant chat loop."""
@@ -622,14 +721,23 @@ I automatically save everything and retrieve relevant context for you.
                 if self.calendar:
                     calendar_event = self.extractor.detect_calendar_intent(user_input)
                     if calendar_event:
-                        # Create calendar event
-                        created_event = self.calendar.create_event(
-                            summary=calendar_event["summary"],
-                            start_time=calendar_event["datetime"],
-                            end_time=calendar_event["datetime"]
-                            + timedelta(hours=calendar_event["duration_hours"]),
-                            description=calendar_event.get("description"),
-                        )
+                        # Show loading indicator while creating event
+                        from rich.live import Live
+                        from rich.spinner import Spinner
+
+                        with Live(
+                            Spinner("dots", text="Creating calendar event..."),
+                            console=self.console,
+                            transient=True,
+                        ):
+                            # Create calendar event
+                            created_event = self.calendar.create_event(
+                                summary=calendar_event["summary"],
+                                start_time=calendar_event["datetime"],
+                                end_time=calendar_event["datetime"]
+                                + timedelta(hours=calendar_event["duration_hours"]),
+                                description=calendar_event.get("description"),
+                            )
 
                         if created_event:
                             calendar_created = True
@@ -672,13 +780,14 @@ I automatically save everything and retrieve relevant context for you.
                     # Show ready indicator FIRST (immediate feedback)
                     self.print_ready_indicator()
 
-                    # Enrich both messages in background thread (non-blocking)
-                    enrichment_thread = threading.Thread(
-                        target=self._enrich_messages_background,
-                        args=(user_conv_id, user_input, assistant_conv_id, response),
-                        daemon=True,
+                    # Enrich both messages in background using thread pool (non-blocking, bounded)
+                    self.enrichment_executor.submit(
+                        self._enrich_messages_background,
+                        user_conv_id,
+                        user_input,
+                        assistant_conv_id,
+                        response,
                     )
-                    enrichment_thread.start()
                 else:
                     # No response, still show ready indicator
                     self.print_ready_indicator()
@@ -734,14 +843,33 @@ def main():
     # Set verbose mode in config
     config.VERBOSE_MODE = args.verbose
 
-    # Configure logging with Rich handler
+    # Configure logging with Rich handler and file rotation
+    from logging.handlers import RotatingFileHandler
+
     from rich.logging import RichHandler
 
     log_level = logging.DEBUG if args.verbose else logging.WARNING
+
+    # Create handlers
+    handlers = [RichHandler(rich_tracebacks=True, show_time=False, show_path=False)]
+
+    # Add rotating file handler for persistent logs
+    file_handler = RotatingFileHandler(
+        "assistant.log",
+        maxBytes=10 * 1024 * 1024,  # 10MB per file
+        backupCount=5,  # Keep 5 backup files
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    handlers.append(file_handler)
+
     logging.basicConfig(
         level=log_level,
         format="%(message)s",
-        handlers=[RichHandler(rich_tracebacks=True, show_time=False, show_path=False)],
+        handlers=handlers,
     )
 
     # Override config if specified
@@ -751,6 +879,18 @@ def main():
         config.TEMPERATURE = args.temperature
 
     console = Console()
+    assistant = None
+
+    # Set up signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        """Handle SIGTERM and SIGINT for graceful shutdown."""
+        console.print("\n[yellow]⚠ Shutting down gracefully...[/yellow]")
+        if assistant:
+            assistant._cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     try:
         # Load model and tokenizer

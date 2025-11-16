@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,70 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
+
+
+class CircuitBreaker:
+    """Simple circuit breaker for API calls."""
+
+    def __init__(self, failure_threshold: int = 5, timeout: int = 60):
+        """
+        Initialize circuit breaker.
+
+        Args:
+            failure_threshold: Number of failures before opening circuit
+            timeout: Seconds to wait before trying again (half-open state)
+        """
+        self.failure_threshold = failure_threshold
+        self.timeout = timeout
+        self.failures = 0
+        self.last_failure_time = None
+        self.state = "closed"  # closed, open, half-open
+
+    def call(self, func, *args, **kwargs):
+        """
+        Execute function with circuit breaker protection.
+
+        Args:
+            func: Function to call
+            *args, **kwargs: Arguments for the function
+
+        Returns:
+            Function result
+
+        Raises:
+            Exception: If circuit is open or function fails
+        """
+        # Check if we should try again (transition to half-open)
+        if self.state == "open":
+            if (
+                self.last_failure_time
+                and time.time() - self.last_failure_time > self.timeout
+            ):
+                logger.info("Circuit breaker transitioning to half-open state")
+                self.state = "half-open"
+            else:
+                raise Exception(
+                    "Circuit breaker is OPEN - Google Calendar temporarily unavailable"
+                )
+
+        try:
+            result = func(*args, **kwargs)
+            # Success - reset failures
+            if self.state == "half-open":
+                logger.info("Circuit breaker closing after successful call")
+            self.failures = 0
+            self.state = "closed"
+            return result
+        except Exception as e:
+            self.failures += 1
+            self.last_failure_time = time.time()
+
+            if self.failures >= self.failure_threshold:
+                logger.error(f"Circuit breaker OPENED after {self.failures} failures")
+                self.state = "open"
+
+            raise
+
 
 # Scopes required for calendar access
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -98,6 +163,7 @@ class GoogleCalendarIntegration:
             "GOOGLE_CREDENTIALS_PATH", "credentials.json"
         )
         self.creds: Optional[Credentials] = None
+        self.circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=60)
         self.service = None
         self._encryption_key = self._get_or_create_encryption_key()
 
@@ -138,7 +204,8 @@ class GoogleCalendarIntegration:
             Credentials object or None if not found
         """
         try:
-            cursor = self.db.cursor()
+            conn = self.db._get_connection()
+            cursor = conn.cursor()
             cursor.execute("SELECT token_data FROM calendar_credentials WHERE id = 1")
             row = cursor.fetchone()
 
@@ -183,7 +250,8 @@ class GoogleCalendarIntegration:
             token_json = json.dumps(token_data)
             encrypted_token = self._encrypt_token(token_json)
 
-            cursor = self.db.cursor()
+            conn = self.db._get_connection()
+            cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO calendar_credentials (id, token_data, updated_at)
@@ -191,7 +259,7 @@ class GoogleCalendarIntegration:
             """,
                 (encrypted_token,),
             )
-            self.db.commit()
+            conn.commit()
 
             logger.info("Credentials saved to database successfully")
 
@@ -344,10 +412,15 @@ class GoogleCalendarIntegration:
             if attendees:
                 event["attendees"] = [{"email": email} for email in attendees]
 
-            # Create the event
-            created_event = (
-                self.service.events().insert(calendarId="primary", body=event).execute()
-            )
+            # Create the event with circuit breaker protection
+            def _create_event():
+                return (
+                    self.service.events()
+                    .insert(calendarId="primary", body=event)
+                    .execute()
+                )
+
+            created_event = self.circuit_breaker.call(_create_event)
 
             logger.info(f"Event created: {created_event.get('htmlLink')}")
             return created_event
@@ -413,19 +486,22 @@ class GoogleCalendarIntegration:
             time_min = now.isoformat() + "Z"
             time_max = time_max.isoformat() + "Z"
 
-            # Call Calendar API
-            events_result = (
-                self.service.events()
-                .list(
-                    calendarId="primary",
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    maxResults=10,
-                    singleEvents=True,
-                    orderBy="startTime",
+            # Call Calendar API with circuit breaker protection
+            def _get_events():
+                return (
+                    self.service.events()
+                    .list(
+                        calendarId="primary",
+                        timeMin=time_min,
+                        timeMax=time_max,
+                        maxResults=10,
+                        singleEvents=True,
+                        orderBy="startTime",
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+
+            events_result = self.circuit_breaker.call(_get_events)
 
             events = events_result.get("items", [])
             logger.info(f"Found {len(events)} upcoming events in next {hours} hours")

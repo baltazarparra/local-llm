@@ -34,6 +34,7 @@ prompt-toolkit>=3.0.0
 # Personal Assistant - Semantic Search & Memory
 sentence-transformers>=2.2.0  # Semantic embeddings (small, efficient)
 numpy>=1.24.0                 # Vector operations
+psutil>=5.9.0                 # System and process monitoring
 
 # Google Calendar Integration
 google-auth-oauthlib>=1.2.0   # OAuth2 flow for Google Calendar

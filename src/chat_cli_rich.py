@@ -283,15 +283,30 @@ class RichChatCLI:
             self.console.print(f"[red]✗ Error during generation: {e}[/red]")
             return ""
 
+    def print_ready_indicator(self):
+        """Display ready indicator showing assistant is waiting for input."""
+        from rich.rule import Rule
+        self.console.print(
+            Rule(
+                "[dim green]Ready[/dim green]",
+                style="dim green",
+                characters="·"
+            )
+        )
+        self.console.print("[dim]Type your message and press Meta+Enter (ESC+Enter) or Alt+Enter to send[/dim]")
+        self.console.print()
+
     def run(self):
         """Start the interactive chat loop."""
         self.print_welcome()
 
         while True:
             try:
-                # Get user input with Prompt Toolkit
+                # Get user input with styled prompt
+                from prompt_toolkit.formatted_text import HTML
+                prompt_text = HTML('<ansiblue><b>You</b></ansiblue> <ansicyan>➜</ansicyan> ')
                 user_input = self.session.prompt(
-                    "You> ",
+                    prompt_text,
                     multiline=True,
                 ).strip()
 
@@ -317,7 +332,8 @@ class RichChatCLI:
                     # Add assistant response to history
                     self.add_message("assistant", response)
 
-                self.console.print()  # Blank line after response
+                # Show ready indicator
+                self.print_ready_indicator()
 
             except KeyboardInterrupt:
                 self.console.print(
@@ -399,8 +415,8 @@ def main():
 
     try:
         # Load model and tokenizer
-        console.print("[cyan]Loading model... (this may take a minute)[/cyan]")
-        tokenizer, model = load_tokenizer_and_model(model_id=args.model)
+        with console.status("[cyan]Loading model...", spinner="dots", spinner_style="cyan"):
+            tokenizer, model = load_tokenizer_and_model(model_id=args.model)
 
         # Print model info
         model_info = get_model_info(model)

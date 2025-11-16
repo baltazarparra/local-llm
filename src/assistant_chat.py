@@ -8,6 +8,7 @@ extracts metadata, and retrieves relevant context for intelligent responses.
 import argparse
 import logging
 import sys
+import threading
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -155,6 +156,31 @@ class AssistantChatCLI:
             logger.debug(f"Enriched conversation {conversation_id}")
         except Exception as e:
             logger.warning(f"Could not enrich conversation: {e}")
+
+    def _enrich_messages_background(
+        self,
+        user_conv_id: int,
+        user_message: str,
+        assistant_conv_id: int,
+        assistant_message: str
+    ):
+        """
+        Enrich both user and assistant messages in background thread.
+
+        This runs asynchronously to avoid blocking the UI while metadata
+        extraction and embedding generation happen.
+
+        Args:
+            user_conv_id: User conversation ID
+            user_message: User message content
+            assistant_conv_id: Assistant conversation ID
+            assistant_message: Assistant message content
+        """
+        try:
+            self.enrich_conversation(user_conv_id, user_message, "user")
+            self.enrich_conversation(assistant_conv_id, assistant_message, "assistant")
+        except Exception as e:
+            logger.warning(f"Background enrichment failed: {e}")
 
     def retrieve_context(self, query: str, top_k: int = 5) -> List[Dict]:
         """
@@ -438,38 +464,59 @@ I automatically save everything and retrieve relevant context for you.
         Returns:
             Generated response
         """
-        # Retrieve relevant context
-        self.console.print("[dim]Retrieving relevant context...[/dim]")
-        relevant_contexts = self.retrieve_context(user_message, top_k=5)
+        # Keep spinner active through entire thinking process
+        accumulated = ""
+        with self.console.status("[dim]Thinking...", spinner="dots"):
+            # Retrieve relevant context
+            relevant_contexts = self.retrieve_context(user_message, top_k=5)
 
-        # Prepare messages with context injection
-        messages_for_llm = [self.history[0]]  # System prompt
+            # Prepare messages with context injection
+            messages_for_llm = [self.history[0]]  # System prompt
 
-        # If we have relevant context, inject it
+            # If we have relevant context, inject it
+            if relevant_contexts:
+                context_message = create_context_injection_prompt(
+                    relevant_contexts, user_message
+                )
+                messages_for_llm.append({"role": "user", "content": context_message})
+            else:
+                # No context, use original message
+                messages_for_llm.append({"role": "user", "content": user_message})
+
+            # Add recent conversation history (excluding system prompt)
+            for msg in self.history[1:]:
+                if msg not in messages_for_llm:
+                    messages_for_llm.append(msg)
+
+            # Start streaming and get first chunk before spinner ends
+            stream_iterator = self.generator.generate_chat_stream(messages_for_llm)
+            try:
+                first_chunk = next(stream_iterator)
+                accumulated = first_chunk
+            except StopIteration:
+                return ""
+
+        # Spinner ends here - show context count if relevant
         if relevant_contexts:
-            context_message = create_context_injection_prompt(
-                relevant_contexts, user_message
-            )
-            messages_for_llm.append({"role": "user", "content": context_message})
-            
-            # Show retrieved context count
             self.console.print(
                 f"[dim]Found {len(relevant_contexts)} relevant past conversation(s)[/dim]\n"
             )
-        else:
-            # No context, use original message
-            messages_for_llm.append({"role": "user", "content": user_message})
 
-        # Add recent conversation history (excluding system prompt)
-        for msg in self.history[1:]:
-            if msg not in messages_for_llm:
-                messages_for_llm.append(msg)
-
-        # Generate streaming response
-        accumulated = ""
+        # Now start Live() display with first chunk already visible
         try:
             with Live(refresh_per_second=10, console=self.console) as live:
-                for chunk in self.generator.generate_chat_stream(messages_for_llm):
+                # Show first chunk immediately
+                md = Markdown(accumulated, code_theme="monokai")
+                panel = Panel(
+                    md,
+                    title="[bold green]🧠 Assistant[/bold green]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+                live.update(panel)
+
+                # Continue with remaining chunks
+                for chunk in stream_iterator:
                     accumulated += chunk
 
                     # Render as markdown
@@ -482,6 +529,8 @@ I automatically save everything and retrieve relevant context for you.
                     )
                     live.update(panel)
 
+            # Add newline after Live() context for clean console state
+            self.console.print()
             return accumulated
 
         except Exception as e:
@@ -489,14 +538,31 @@ I automatically save everything and retrieve relevant context for you.
             self.console.print(f"[red]✗ Error during generation: {e}[/red]")
             return ""
 
+    def print_ready_indicator(self):
+        """Display ready indicator showing assistant is waiting for input."""
+        from rich.rule import Rule
+        # Ensure clean separation from previous output
+        self.console.print()
+        self.console.print(
+            Rule(
+                "[dim green]Ready[/dim green]",
+                style="dim green",
+                characters="·"
+            )
+        )
+        self.console.print("[dim]Type your message and press Meta+Enter (ESC+Enter) or Alt+Enter to send[/dim]")
+        self.console.print()
+
     def run(self):
         """Start the interactive assistant chat loop."""
         self.print_welcome()
 
         while True:
             try:
-                # Get user input
-                user_input = self.session.prompt("You> ", multiline=True).strip()
+                # Get user input with styled prompt
+                from prompt_toolkit.formatted_text import HTML
+                prompt_text = HTML('<ansiblue><b>You</b></ansiblue> <ansicyan>➜</ansicyan> ')
+                user_input = self.session.prompt(prompt_text, multiline=True).strip()
 
                 # Skip empty input
                 if not user_input:
@@ -526,11 +592,19 @@ I automatically save everything and retrieve relevant context for you.
                     # Add to working memory
                     self.add_message("assistant", response)
 
-                    # Enrich both messages with metadata (in background conceptually)
-                    self.enrich_conversation(user_conv_id, user_input, "user")
-                    self.enrich_conversation(assistant_conv_id, response, "assistant")
+                    # Show ready indicator FIRST (immediate feedback)
+                    self.print_ready_indicator()
 
-                self.console.print()
+                    # Enrich both messages in background thread (non-blocking)
+                    enrichment_thread = threading.Thread(
+                        target=self._enrich_messages_background,
+                        args=(user_conv_id, user_input, assistant_conv_id, response),
+                        daemon=True
+                    )
+                    enrichment_thread.start()
+                else:
+                    # No response, still show ready indicator
+                    self.print_ready_indicator()
 
             except KeyboardInterrupt:
                 self.console.print(
@@ -601,8 +675,8 @@ def main():
 
     try:
         # Load model and tokenizer
-        console.print("[cyan]Loading model... (this may take a minute)[/cyan]")
-        tokenizer, model = load_tokenizer_and_model(model_id=args.model)
+        with console.status("[cyan]Loading model...", spinner="dots", spinner_style="cyan"):
+            tokenizer, model = load_tokenizer_and_model(model_id=args.model)
 
         # Print model info
         model_info = get_model_info(model)

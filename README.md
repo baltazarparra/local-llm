@@ -1,9 +1,9 @@
 # ✳️ ego_proxy
 Run powerful AI language models FREE completely offline. No "Big Brother" with your data, stay 100% local.
 
-## What You Can Do
+## Personal Assistant with Memory
 
-**Personal Assistant with Memory:** Talk naturally with your AI assistant, who remembers everything you've said and can provide context-aware responses and integrate with Google Calendar for event management.
+**Talk naturally with your AI assistant** , who remembers everything you've said and can provide context-aware responses and integrate with Google Calendar for event management.
 
 ## What You Need
 

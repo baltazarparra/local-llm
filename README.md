@@ -3,9 +3,7 @@ Run powerful AI language models FREE completely offline. No "Big Brother" with y
 
 ## What You Can Do
 
-**Standard Chat:** Chat interactively with AI using a beautiful, feature-rich terminal interface. Ego Proxy provides a modern chat experience with markdown rendering, syntax highlighting, streaming responses, and conversation history.
-
-**Personal Assistant (NEW!):** Transform your chat into an intelligent personal work assistant that remembers everything you tell it and interact with your calendar. Automatically tracks people, topics, dates, and provides context-aware advice based on your conversation history. Perfect for logging daily work activities and getting intelligent reminders.
+**Personal Assistant with Memory:** An intelligent personal work assistant that remembers everything you tell it and integrates with your Google Calendar. Automatically tracks people, topics, dates, and provides context-aware advice based on your conversation history. Perfect for logging daily work activities, managing your schedule, and getting intelligent reminders.
 
 ## What You Need
 
@@ -29,17 +27,22 @@ pip install --prefer-binary --upgrade-strategy only-if-needed -r requirements.tx
 
 ## Using It
 
-**Standard Interactive Chat:**
-```bash
-./chat-rich.sh
-```
-
-**Personal Assistant with Memory:**
+**Personal Assistant:**
 ```bash
 ./assistant.sh
 ```
 
-The assistant automatically saves all conversations, extracts metadata (people, topics, sentiment), and retrieves relevant context when you ask questions. See `ASSISTANT.md` for detailed documentation.
+The assistant automatically saves all conversations, extracts metadata (people, topics, sentiment), retrieves relevant context when you ask questions, and integrates with Google Calendar for event management. See `ASSISTANT.md` for detailed documentation and `GOOGLE_CALENDAR_SETUP.md` for calendar integration setup.
+
+## Features
+
+- **Perfect Memory**: Never forget a conversation - everything is automatically saved and searchable
+- **Context-Aware**: Retrieves relevant past conversations to provide informed responses
+- **Metadata Extraction**: Automatically identifies people, topics, dates, sentiment, and categories
+- **Google Calendar Integration**: Create events naturally with phrases like "schedule meeting tomorrow at 3pm"
+- **Semantic Search**: Find past conversations using natural language queries
+- **Timeline View**: Browse conversations chronologically by person or topic
+- **Statistics**: Track your conversation patterns and engagement
 
 ## Configuration
 
@@ -49,6 +52,7 @@ MODEL_ID=Qwen/Qwen2.5-1.5B-Instruct
 USE_GPU=true
 MAX_NEW_TOKENS=512
 TEMPERATURE=0.7
+GOOGLE_CREDENTIALS_PATH=credentials.json
 ```
 
 ## Troubleshooting
@@ -81,14 +85,16 @@ TEMPERATURE=0.7
 
 **Very slow?** You're probably on CPU. GPU is much faster.
 
-**Script won't run?** Make it executable: `chmod +x chat-rich.sh`
+**Script won't run?** Make it executable: `chmod +x assistant.sh`
+
+**Google Calendar not working?** See `GOOGLE_CALENDAR_SETUP.md` for complete setup instructions
 
 ## Documentation
 
-- **PLAN.md** - Development roadmap and architecture
 - **ASSISTANT.md** - Personal Assistant feature documentation
+- **GOOGLE_CALENDAR_SETUP.md** - Google Calendar integration setup guide
 - **CONTRIBUTING.md** - Contribution guidelines
 
 ## That's It
 
-Your data stays local. No tracking. No cloud calls. Just you and your AI model running on your machine.
+Your data stays local. No tracking. No cloud calls. Just you and your AI model running on your machine with the power of persistent memory and calendar integration.

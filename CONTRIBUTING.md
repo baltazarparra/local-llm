@@ -542,12 +542,11 @@ Looking for where to start? These areas need help:
 ### Local Testing
 
 ```bash
-# Test all interfaces quickly
-./run.sh scripts/run_once.py --prompt "Test" --max-tokens 5
-./chat-rich.sh  # Type /exit to quit quickly
-./api.sh &  # Run in background
-curl http://localhost:8000/health
-pkill -f api_server
+# Test the personal assistant
+./assistant.sh  # Type /exit to quit quickly
+
+# Test with verbose logging
+./assistant.sh --verbose
 ```
 
 ### Debugging
@@ -555,7 +554,7 @@ pkill -f api_server
 ```bash
 # Verbose logging
 export LOG_LEVEL=DEBUG
-./chat.sh
+./assistant.sh
 
 # Python debugger
 python3 -m pdb scripts/run_once.py --prompt "Test"

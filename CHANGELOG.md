@@ -7,17 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Google Calendar Integration**
+  - OAuth2 authentication with encrypted token storage
+  - Natural language event creation ("schedule meeting tomorrow at 3pm")
+  - Upcoming events display on startup (next 48 hours)
+  - WSL-compatible browser authentication
+  - 24+ trigger phrases for calendar intent detection
+
+### Changed
+- **Personal Assistant Improvements**
+  - Simplified event creation response (no LLM response, just confirmation)
+  - Enhanced calendar intent detection with comprehensive trigger phrases
+  - Better error logging for debugging calendar issues
+
+### Removed
+- Standard Chat feature (`src/chat_cli_rich.py`, `chat-rich.sh`)
+- Focus is now exclusively on Personal Assistant with memory and calendar integration
+
 ### Planned
 - Comprehensive test suite (pytest)
 - Docker containerization
 - CI/CD pipeline (GitHub Actions)
 - Model quantization support (4-bit/8-bit)
-
-### Removed in This Version
-- One-off text generation script (`scripts/run_once.py`)
-- Classic CLI interface (`src/chat_cli.py`)
-- REST API server (`src/api_server.py`)
-- Focus is now exclusively on the Rich UI interactive chat interface
 
 ## [0.1.0] - 2025-11-15
 

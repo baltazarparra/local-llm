@@ -113,12 +113,12 @@ if [ "$USE_UV" = true ]; then
 else
     # Install using optimized pip
     PIP_FLAGS="--prefer-binary --upgrade-strategy only-if-needed"
-    
+
     # Use pip cache if available
     if [ -d "$HOME/.cache/pip" ]; then
         PIP_FLAGS="$PIP_FLAGS --cache-dir $HOME/.cache/pip"
     fi
-    
+
     if [ "$INSTALL_DEV" = true ]; then
         pip install $PIP_FLAGS -r "$REQUIREMENTS_FILE" -r "$REQUIREMENTS_DEV_FILE"
     else
@@ -141,5 +141,6 @@ fi
 
 echo ""
 echo -e "${GREEN}Setup complete! You can now run:${NC}"
-echo "  ./chat-rich.sh"
-
+echo "  ./assistant.sh"
+echo ""
+echo -e "${CYAN}For Google Calendar integration, see GOOGLE_CALENDAR_SETUP.md${NC}"

@@ -307,22 +307,23 @@ print(f"Total conversations: {stats['total_conversations']}")
 ## Privacy & Security
 
 - **100% Local**: All data stored locally in SQLite
-- **No Cloud Calls**: No telemetry, no external APIs
+- **No Cloud Calls**: No telemetry, no external APIs (except Google Calendar if configured)
 - **Your Control**: You own the database file
 - **Portable**: Copy the `.db` file to backup or move
 
-## Comparison to Standard Chat
+## Key Features
 
-| Feature | Standard Chat | Personal Assistant |
-|---------|--------------|-------------------|
-| Memory | Session only | Permanent |
-| Context Awareness | Limited | Full history |
-| People Tracking | No | Yes |
-| Topic Tracking | No | Yes |
-| Search History | No | Yes, semantic |
-| Timeline View | No | Yes |
-| Metadata Extraction | No | Yes |
-| Export | Manual | Built-in |
+| Feature | Description |
+|---------|-------------|
+| **Permanent Memory** | All conversations automatically saved |
+| **Context Awareness** | Full history retrieval for informed responses |
+| **People Tracking** | Automatically identifies and tracks people mentioned |
+| **Topic Tracking** | Categorizes conversations by topic |
+| **Semantic Search** | Find past conversations using natural language |
+| **Timeline View** | Browse conversations chronologically |
+| **Metadata Extraction** | Auto-extracts dates, sentiment, categories |
+| **Google Calendar** | Natural language event creation and upcoming events display |
+| **Export** | Export conversations to markdown |
 
 ## Future Enhancements
 
@@ -330,10 +331,10 @@ Potential improvements (not yet implemented):
 - Web UI for browsing conversation history
 - Export to various formats (JSON, CSV)
 - Scheduled reminders based on history
-- Integration with calendar/email
 - Multi-user support
 - Conversation tagging and categorization
 - Advanced analytics and insights
+- Email integration
 
 ## Support
 

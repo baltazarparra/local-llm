@@ -558,15 +558,15 @@ I automatically save everything and retrieve relevant context for you.
             # Set shutdown flag to stop background enrichment tasks
             self._shutdown_requested = True
 
-            # Show loading animation during cleanup
-            with self.console.status("[dim]Saving memory and cleaning up...", spinner="dots"):
-                # Give a moment for any pending operations
-                import time
-                time.sleep(0.5)
-
+            # Show goodbye message
             self.console.print(
                 "\n[yellow]👋 Goodbye! Your memory has been saved.[/yellow]\n"
             )
+
+            # Show loader while performing cleanup
+            with self.console.status("[dim]Closing assistant...", spinner="dots"):
+                self._cleanup()
+
             return True
 
         elif cmd in ["/reset", "/clear"]:
@@ -773,8 +773,11 @@ I automatically save everything and retrieve relevant context for you.
                 )
                 messages_for_llm.append({"role": "user", "content": context_message})
             else:
-                # No context, use original message
-                messages_for_llm.append({"role": "user", "content": user_message})
+                # No context found - explicitly tell the LLM
+                no_context_message = f"""No relevant conversation history found for this query.
+
+Current question: {user_message}"""
+                messages_for_llm.append({"role": "user", "content": no_context_message})
 
             # Add recent conversation history (excluding system prompt)
             for msg in self.history[1:]:
@@ -872,6 +875,11 @@ I automatically save everything and retrieve relevant context for you.
 
     def _cleanup(self):
         """Cleanup resources on exit."""
+        # Prevent double cleanup
+        if hasattr(self, '_cleanup_done') and self._cleanup_done:
+            return
+        self._cleanup_done = True
+
         logger.info("Cleaning up resources...")
 
         # Set shutdown flag to prevent new enrichment tasks
@@ -1030,9 +1038,18 @@ I automatically save everything and retrieve relevant context for you.
                 continue
 
             except EOFError:
+                # Set shutdown flag to stop background enrichment tasks
+                self._shutdown_requested = True
+
+                # Show goodbye message
                 self.console.print(
                     "\n[yellow]👋 Goodbye! Your memory has been saved.[/yellow]\n"
                 )
+
+                # Show loader while performing cleanup
+                with self.console.status("[dim]Closing assistant...", spinner="dots"):
+                    self._cleanup()
+
                 break
 
 

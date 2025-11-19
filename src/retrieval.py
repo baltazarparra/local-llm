@@ -77,7 +77,10 @@ class ContextRetriever:
             if conv:
                 conv['similarity'] = similarity
                 conversations.append(conv)
-        
+
+        # Filter out duplicate questions (prevents same question from filling all results)
+        conversations = self._filter_duplicate_questions(conversations, query)
+
         # Apply filters
         conversations = self._apply_filters(
             conversations,
@@ -85,11 +88,12 @@ class ContextRetriever:
             topic_filter=topic_filter,
             time_window_days=time_window_days
         )
-        
+
         # Re-rank with combined scoring
         conversations = self._rerank_results(
             conversations,
-            apply_time_decay=time_decay
+            apply_time_decay=time_decay,
+            query=query
         )
         
         # Return top k results
@@ -221,10 +225,66 @@ class ContextRetriever:
         logger.debug(f"Filtered from {len(conversations)} to {len(filtered)} conversations")
         return filtered
 
+    def _filter_duplicate_questions(
+        self,
+        conversations: list[Dict],
+        query: str
+    ) -> list[Dict]:
+        """
+        Filter out duplicate or very similar questions from results.
+
+        When a user asks a question, we don't want to return previous times
+        they asked the same question - we want answers/information.
+
+        Args:
+            conversations: List of conversations to filter
+            query: The current query
+
+        Returns:
+            Filtered list with duplicate questions removed
+        """
+        query_lower = query.lower().strip()
+
+        # Check if the query is a question (starts with what/who/when/where/how/why/is/are/do/does)
+        is_question = any(query_lower.startswith(q) for q in [
+            'what', 'who', 'when', 'where', 'how', 'why', 'is', 'are', 'do', 'does', 'can', 'will', 'should'
+        ])
+
+        if not is_question:
+            # Not a question, no need to filter
+            return conversations
+
+        filtered = []
+        seen_similar_questions = set()
+
+        for conv in conversations:
+            content = conv.get('content', '').lower().strip()
+            role = conv.get('role', '')
+
+            # Check if this content is very similar to the query (likely same question)
+            # Similarity > 0.95 means it's essentially the same question
+            if conv.get('similarity', 0) > 0.95 and role == 'user':
+                # This is likely the user asking the same/similar question
+                # Skip if we've already seen a similar question
+                content_short = content[:50]
+                if content_short in seen_similar_questions:
+                    logger.debug(f"Skipping duplicate question: {content[:100]}")
+                    continue
+                seen_similar_questions.add(content_short)
+
+                # Keep only ONE instance of similar questions, and de-prioritize it
+                conv['is_duplicate_question'] = True
+
+            filtered.append(conv)
+
+        logger.debug(f"Filtered {len(conversations) - len(filtered)} duplicate questions")
+        return filtered
+
     def _rerank_results(
         self,
         conversations: list[Dict],
-        apply_time_decay: bool = True
+        apply_time_decay: bool = True,
+        query: str | None = None
     ) -> list[Dict]:
         """
         Re-rank results using combined scoring.
@@ -239,7 +299,7 @@ class ContextRetriever:
         for conv in conversations:
             # Base score from semantic similarity
             base_score = conv.get('similarity', 0.5)
-            
+
             # Time decay: recent conversations get higher scores
             time_score = 1.0
             if apply_time_decay:
@@ -248,16 +308,30 @@ class ContextRetriever:
                     days_ago = (datetime.now() - timestamp).days
                     # Exponential decay: score halves every 30 days
                     time_score = 0.5 ** (days_ago / 30.0)
-            
+
             # Role boost: user messages often more informative
             role_score = 1.1 if conv.get('role') == 'user' else 1.0
-            
+
             # Sentiment boost: emotional content often important
             sentiment = conv.get('sentiment', 'neutral')
             sentiment_score = 1.2 if sentiment in ['negative', 'positive'] else 1.0
-            
+
+            # Duplicate question penalty: strongly de-prioritize repeated questions
+            duplicate_penalty = 0.3 if conv.get('is_duplicate_question') else 1.0
+
+            # Content richness boost: longer, more informative messages are better
+            content_length = len(conv.get('content', ''))
+            content_boost = min(1.5, 1.0 + (content_length / 200))  # Cap at 1.5x
+
+            # Information vs question boost: penalize short questions, boost statements
+            content_lower = conv.get('content', '').lower()
+            is_short_question = content_length < 100 and any(
+                content_lower.startswith(q) for q in ['what', 'who', 'when', 'where', 'how', 'why']
+            )
+            info_boost = 0.7 if is_short_question else 1.3
+
             # Combined score
-            final_score = base_score * time_score * role_score * sentiment_score
+            final_score = base_score * time_score * role_score * sentiment_score * duplicate_penalty * content_boost * info_boost
             conv['final_score'] = final_score
         
         # Sort by final score

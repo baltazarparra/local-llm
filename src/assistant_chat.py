@@ -72,6 +72,11 @@ class AssistantChatCLI:
         self.history: list[dict[str, str]] = []
         self.session_id = session_id or str(uuid.uuid4())
 
+        # Session history buffer for recent messages (fixes race condition)
+        # Keeps last N messages in memory to ensure current session is always in context
+        self.session_history: list[dict[str, str]] = []
+        self.session_history_limit = 10  # Keep last 10 messages
+
         # Shutdown flag for graceful exit
         self._shutdown_requested = False
 
@@ -178,6 +183,14 @@ class AssistantChatCLI:
         """Add a message to working memory."""
         self.history.append({"role": role, "content": content})
 
+        # Add to session history buffer (excludes system prompts)
+        if role != "system":
+            self.session_history.append({"role": role, "content": content})
+
+            # Trim session history if too long
+            if len(self.session_history) > self.session_history_limit:
+                self.session_history = self.session_history[-self.session_history_limit:]
+
         # Trim history if too long (keep system prompt)
         if len(self.history) > self.max_history:
             self.history = [self.history[0]] + self.history[-(self.max_history - 1) :]
@@ -235,6 +248,64 @@ class AssistantChatCLI:
             logger.debug(f"Enriched conversation {conversation_id}")
         except Exception as e:
             logger.warning(f"Could not enrich conversation: {e}")
+
+    def enrich_conversation_sync(self, conversation_id: int, message: str, role: str):
+        """
+        Extract and save metadata for a conversation synchronously with retry logic.
+
+        This method is used for user messages that need to be enriched before
+        response generation to ensure they can be found by semantic search.
+
+        Args:
+            conversation_id: ID of the conversation
+            message: Message content
+            role: Message role
+        """
+        import time
+
+        max_retries = 5
+        base_delay = 0.1  # Start with shorter delay for sync operations
+
+        for attempt in range(max_retries):
+            try:
+                # Extract metadata using LLM
+                metadata = self.extractor.extract_metadata(message, role)
+
+                # Generate embedding
+                embedding = generate_embedding(message)
+                embedding_bytes = embedding_to_bytes(embedding)
+
+                # Save metadata to database with retry logic
+                self.db.add_metadata(
+                    conversation_id=conversation_id,
+                    people=metadata.get("people"),
+                    topics=metadata.get("topics"),
+                    dates_mentioned=metadata.get("dates_mentioned"),
+                    sentiment=metadata.get("sentiment"),
+                    category=metadata.get("category"),
+                    embedding=embedding_bytes,
+                )
+
+                logger.debug(f"Enriched conversation {conversation_id} (sync)")
+                return  # Success
+
+            except Exception as e:
+                if "database is locked" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2**attempt)  # Exponential backoff
+                        logger.debug(
+                            f"Database locked during sync enrichment, retrying in {delay}s (attempt {attempt + 1}/{max_retries})"
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.warning(
+                            f"Could not enrich conversation synchronously after {max_retries} attempts: database is locked"
+                        )
+                        # Not critical - session history buffer will still provide context
+                        return
+                else:
+                    logger.warning(f"Could not enrich conversation synchronously: {e}")
+                    return
 
     def _enrich_messages_background(
         self,
@@ -314,6 +385,7 @@ class AssistantChatCLI:
     def reset_history(self):
         """Clear working memory (keep system prompt)."""
         self.history = [{"role": "system", "content": ASSISTANT_SYSTEM_PROMPT}]
+        self.session_history = []  # Also clear session history buffer
 
     def print_welcome(self):
         """Display welcome message."""
@@ -582,17 +654,36 @@ I automatically save everything and retrieve relevant context for you.
         """
         # Keep spinner active through entire thinking process
         accumulated = ""
+        # Initialize context variables (need to be in outer scope for display later)
+        relevant_contexts = []
+        session_contexts = []
+        all_contexts = []
+
         with self.console.status("[dim]Thinking...", spinner="dots"):
-            # Retrieve relevant context
+            # Retrieve relevant context from semantic search
             relevant_contexts = self.retrieve_context(user_message, top_k=5)
+
+            # Add recent session history to context (fixes race condition where
+            # messages don't have embeddings yet and won't be found by semantic search)
+            session_contexts = []
+            for msg in self.session_history:
+                # Format session messages as context entries
+                session_contexts.append({
+                    "role": msg["role"],
+                    "content": msg["content"],
+                    "timestamp": "recent",  # Indicate these are from current session
+                })
+
+            # Combine session history + semantic search results
+            all_contexts = session_contexts + relevant_contexts
 
             # Prepare messages with context injection
             messages_for_llm = [self.history[0]]  # System prompt
 
-            # If we have relevant context, inject it
-            if relevant_contexts:
+            # If we have any context (session or semantic), inject it
+            if all_contexts:
                 context_message = create_context_injection_prompt(
-                    relevant_contexts, user_message
+                    all_contexts, user_message
                 )
                 messages_for_llm.append({"role": "user", "content": context_message})
             else:
@@ -613,10 +704,21 @@ I automatically save everything and retrieve relevant context for you.
                 return ""
 
         # Spinner ends here - show context count if relevant
-        if relevant_contexts:
-            self.console.print(
-                f"[dim]Found {len(relevant_contexts)} relevant past conversation(s)[/dim]\n"
-            )
+        if all_contexts:
+            session_count = len(session_contexts)
+            semantic_count = len(relevant_contexts)
+            if session_count > 0 and semantic_count > 0:
+                self.console.print(
+                    f"[dim]Using {session_count} recent message(s) + {semantic_count} past conversation(s)[/dim]\n"
+                )
+            elif session_count > 0:
+                self.console.print(
+                    f"[dim]Using {session_count} recent message(s) from current session[/dim]\n"
+                )
+            elif semantic_count > 0:
+                self.console.print(
+                    f"[dim]Found {semantic_count} relevant past conversation(s)[/dim]\n"
+                )
 
         # Now start Live() display with first chunk already visible
         try:
@@ -797,6 +899,12 @@ I automatically save everything and retrieve relevant context for you.
                 # Add to working memory
                 self.add_message("user", user_input)
 
+                # Enrich user message SYNCHRONOUSLY (before response generation)
+                # This ensures the message has an embedding and can be found by semantic search
+                # even during follow-up questions in the same session
+                # Uses retry logic to handle database lock contention
+                self.enrich_conversation_sync(user_conv_id, user_input, "user")
+
                 # Generate response with context
                 self.console.print()
                 response = self.stream_response_with_context(user_input)
@@ -811,13 +919,13 @@ I automatically save everything and retrieve relevant context for you.
                     # Show ready indicator FIRST (immediate feedback)
                     self.print_ready_indicator()
 
-                    # Enrich both messages in background using thread pool (non-blocking, bounded)
+                    # Enrich assistant message in background (non-blocking)
+                    # Assistant enrichment can be async since we already have the user's message enriched
                     self.enrichment_executor.submit(
-                        self._enrich_messages_background,
-                        user_conv_id,
-                        user_input,
+                        self.enrich_conversation,
                         assistant_conv_id,
                         response,
+                        "assistant",
                     )
                 else:
                     # No response, still show ready indicator

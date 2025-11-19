@@ -697,15 +697,18 @@ I automatically save everything and retrieve relevant context for you.
             if summary:
                 logger.info(f"Session health summary: {summary}")
 
-        # Shutdown thread pool with timeout to prevent hanging
+        # Shutdown thread pool gracefully
         if hasattr(self, "enrichment_executor"):
             logger.info("Waiting for enrichment tasks to complete...")
             try:
-                # Wait up to 10 seconds for in-flight enrichment to complete
-                self.enrichment_executor.shutdown(wait=True, timeout=10.0)
+                # Wait for in-flight enrichment to complete
+                # Note: shutdown() has no timeout parameter, but we've already set
+                # _shutdown_requested flag to prevent new tasks, so this should finish quickly
+                self.enrichment_executor.shutdown(wait=True, cancel_futures=False)
                 logger.info("Enrichment tasks completed")
-            except TimeoutError:
-                logger.warning("Enrichment tasks did not complete in time, forcing shutdown")
+            except Exception as e:
+                logger.error(f"Error during enrichment shutdown: {e}")
+                # Force immediate shutdown without waiting
                 self.enrichment_executor.shutdown(wait=False)
 
         # Close database connection AFTER enrichment threads have stopped
